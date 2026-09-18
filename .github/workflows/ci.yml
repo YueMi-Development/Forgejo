@@ -1,0 +1,497 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - 'forgejo*'
+      - 'v*/forgejo*'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_COLOR: 1
+
+jobs:
+  backend-checks:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24-bookworm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Backend checks
+        run: |
+          su forgejo -c './tools/cimake.sh pr-go'
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: 'npm'
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install frontend dependencies
+        run: make deps-frontend
+
+      - name: Lint frontend
+        run: make lint-frontend
+
+      - name: Check frontend
+        run: make checks-frontend
+
+      - name: Test frontend (Europe/Berlin)
+        run: TZ=Europe/Berlin make test-frontend-coverage
+
+      - name: Test frontend (America/Edmonton)
+        run: TZ=America/Edmonton make test-frontend-coverage
+
+      - name: Build frontend
+        run: make frontend
+
+      - name: Install zstd
+        run: sudo apt-get update -qq && sudo apt-get -q install -qq -y zstd
+
+      - name: Cache frontend build
+        uses: actions/cache/save@v4
+        with:
+          path: public/assets
+          key: frontend-build-${{ github.sha }}
+
+  test-unit:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    container:
+      image: node:24-bookworm
+    services:
+      elasticsearch:
+        image: elasticsearch:7.17.24
+        options: --tmpfs /usr/share/elasticsearch/data:noatime
+        env:
+          discovery.type: single-node
+          ES_JAVA_OPTS: '-Xms512m -Xmx512m'
+          xpack.security.enabled: 'false'
+      minio:
+        image: ghcr.io/minio/minio:latest
+        options: --tmpfs /data:noatime
+        env:
+          MINIO_DOMAIN: minio
+          MINIO_ROOT_USER: 123456
+          MINIO_ROOT_PASSWORD: 12345678
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Test release-notes-assistant.sh
+        run: |
+          apt-get -q install -qq -y jq
+          ./release-notes-assistant.sh test_main
+
+      - name: Run unit tests with coverage
+        run: |
+          su forgejo -c 'make COVERAGE_TEST_ARGS=-race coverage-run'
+        timeout-minutes: 120
+        env:
+          RACE_ENABLED: 'true'
+          TAGS: bindata
+          TEST_ELASTICSEARCH_URL: http://elasticsearch:9200
+          TEST_MINIO_ENDPOINT: minio:9000
+
+      - name: Check test results
+        run: su forgejo -c 'make test-check'
+
+      - name: Upload coverage data
+        uses: actions/cache/save@v4
+        with:
+          path: coverage/data/unit
+          key: coverage-unit-${{ github.sha }}
+
+  test-e2e:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    container:
+      image: node:24-bookworm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Restore frontend build
+        id: cache-frontend
+        uses: actions/cache/restore@v4
+        with:
+          path: public/assets
+          key: frontend-build-${{ github.sha }}
+
+      - name: Build frontend (if not cached)
+        if: steps.cache-frontend.outputs.cache-hit != 'true'
+        run: |
+          su forgejo -c 'make deps-frontend'
+          su forgejo -c 'make frontend'
+
+      - name: Decide to run all tests
+        id: run-all
+        if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'run-all-playwright-tests') || contains(github.event.pull_request.title, 'playwright')
+        run: echo "all=1" >> "$GITHUB_OUTPUT"
+
+      - name: Get changed files
+        if: github.event_name == 'pull_request'
+        id: changed-files
+        uses: tj-actions/changed-files@v47
+        with:
+          separator: '\n'
+
+      - name: Install browser dependencies
+        run: |
+          npx playwright install-deps
+
+      - name: Cache Playwright
+        uses: actions/cache@v4
+        with:
+          key: playwright-${{ hashFiles('package-lock.json') }}
+          path: |
+            ~/.cache/ms-playwright
+
+      - name: Run E2E tests
+        run: |
+          su forgejo -c 'make generate'
+          su forgejo -c 'make coverage-run-e2e'
+        timeout-minutes: 120
+        env:
+          USE_REPO_TEST_DIR: 1
+          CHANGED_FILES: ${{steps.changed-files.outputs.all_changed_files}}
+          RUN_ALL: ${{steps.run-all.all}}
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: tests/e2e/test-artifacts/
+          retention-days: 3
+
+      - name: Upload coverage data
+        uses: actions/cache/save@v4
+        with:
+          path: coverage/data/e2e
+          key: coverage-e2e-${{ github.sha }}
+
+  test-sqlite:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    container:
+      image: node:24-bookworm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Install git-lfs
+        run: apt-get update -qq && apt-get -q install -qq -y git-lfs
+
+      - name: Run SQLite integration tests
+        run: |
+          su forgejo -c 'make test-sqlite-migration'
+          su forgejo -c 'make coverage-run-sqlite'
+        timeout-minutes: 120
+        env:
+          TAGS: sqlite sqlite_unlock_notify
+          TEST_TAGS: sqlite sqlite_unlock_notify
+          USE_REPO_TEST_DIR: 1
+
+      - name: Upload coverage data
+        uses: actions/cache/save@v4
+        with:
+          path: coverage/data/sqlite
+          key: coverage-sqlite-${{ github.sha }}
+
+  test-mysql:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    container:
+      image: node:24-bookworm
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: testgitea
+        options: --tmpfs /var/lib/mysql:noatime
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Install git-lfs
+        run: apt-get update -qq && apt-get -q install -qq -y git-lfs
+
+      - name: Run MySQL integration tests
+        run: |
+          su forgejo -c 'make test-mysql-migration test-mysql'
+        timeout-minutes: 120
+        env:
+          USE_REPO_TEST_DIR: 1
+
+  test-pgsql:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    container:
+      image: node:24-bookworm
+    services:
+      minio:
+        image: ghcr.io/minio/minio:latest
+        options: --tmpfs /data:noatime
+        env:
+          MINIO_ROOT_USER: 123456
+          MINIO_ROOT_PASSWORD: 12345678
+      pgsql:
+        image: postgres:16
+        env:
+          POSTGRES_DB: test
+          POSTGRES_PASSWORD: postgres
+        options: --tmpfs /var/lib/postgresql/data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Install git-lfs
+        run: apt-get update -qq && apt-get -q install -qq -y git-lfs
+
+      - name: Run PostgreSQL integration tests
+        run: |
+          su forgejo -c 'make test-pgsql-migration test-pgsql'
+        timeout-minutes: 120
+        env:
+          RACE_ENABLED: true
+          USE_REPO_TEST_DIR: 1
+
+  test-remote-cacher:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    container:
+      image: node:24-bookworm
+    strategy:
+      matrix:
+        include:
+          - cacher: redis
+            image: redis:7.2-alpine
+            options: --tmpfs /data:noatime
+          - cacher: valkey
+            image: valkey/valkey:7.2-alpine
+            options: --tmpfs /data:noatime
+    name: test-remote-cacher (${{ matrix.cacher }})
+    services:
+      cacher:
+        image: ${{ matrix.cacher.image }}
+        options: ${{ matrix.cacher.options }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Run remote cacher tests
+        run: |
+          su forgejo -c 'make test-remote-cacher test-check'
+        timeout-minutes: 120
+        env:
+          RACE_ENABLED: 'true'
+          TAGS: bindata
+          TEST_REDIS_SERVER: cacher:6379
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [test-unit, test-e2e, test-sqlite]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Restore coverage-unit
+        id: coverage-unit
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/data/unit
+          key: coverage-unit-${{ github.sha }}
+
+      - name: Restore coverage-e2e
+        id: coverage-e2e
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/data/e2e
+          key: coverage-e2e-${{ github.sha }}
+
+      - name: Restore coverage-sqlite
+        id: coverage-sqlite
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage/data/sqlite
+          key: coverage-sqlite-${{ github.sha }}
+
+      - name: Show missing coverage data
+        if: "! steps.coverage-unit.outputs.cache-hit || ! steps.coverage-e2e.outputs.cache-hit || ! steps.coverage-sqlite.outputs.cache-hit"
+        run: |
+          echo "found unit coverage data = ${{ steps.coverage-unit.outputs.cache-hit }}"
+          echo "found e2e coverage data = ${{ steps.coverage-e2e.outputs.cache-hit }}"
+          echo "found sqlite coverage data = ${{ steps.coverage-sqlite.outputs.cache-hit }}"
+
+      - name: Merge and show coverage
+        if: steps.coverage-unit.outputs.cache-hit && steps.coverage-e2e.outputs.cache-hit && steps.coverage-sqlite.outputs.cache-hit
+        run: make coverage-show-percentage
+
+      - name: Upload coverage
+        if: steps.coverage-unit.outputs.cache-hit && steps.coverage-e2e.outputs.cache-hit && steps.coverage-sqlite.outputs.cache-hit
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/textfmt.out
+          retention-days: 1
+
+  security-check:
+    runs-on: ubuntu-latest
+    needs: [test-sqlite, test-pgsql, test-mysql, test-remote-cacher, test-unit]
+    container:
+      image: node:24-bookworm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
+
+      - name: Install backend dependencies
+        run: su forgejo -c 'make deps-backend deps-tools'
+
+      - name: Run security check
+        run: su forgejo -c 'make security-check'
+
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate semgrep rules
+        run: semgrep validate .semgrep/config
+
+      - name: Test semgrep rules
+        run: semgrep --test .semgrep/tests/ --config .semgrep/config/
+
+      - name: Run semgrep ci
+        run: semgrep ci --config .semgrep/config/ --metrics=off
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
