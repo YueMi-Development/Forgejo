@@ -38,8 +38,6 @@ jobs:
 
   frontend-checks:
     runs-on: ubuntu-latest
-    container:
-      image: node:24-bookworm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,12 +46,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
+          cache: 'npm'
 
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get -q install -qq -y git make
-          make deps-frontend
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install frontend dependencies
+        run: make deps-frontend
 
       - name: Lint frontend
         run: make lint-frontend
@@ -71,7 +73,7 @@ jobs:
         run: make frontend
 
       - name: Install zstd
-        run: apt-get -q install -qq -y zstd
+        run: sudo apt-get update -qq && sudo apt-get -q install -qq -y zstd
 
       - name: Cache frontend build
         uses: actions/cache/save@v4
