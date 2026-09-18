@@ -95,7 +95,7 @@ jobs:
           ES_JAVA_OPTS: '-Xms512m -Xmx512m'
           xpack.security.enabled: 'false'
       minio:
-        image: minio/server:RELEASE.2024-08-17T20-41-11Z
+        image: ghcr.io/minio/minio:latest
         options: --tmpfs /data:noatime
         env:
           MINIO_DOMAIN: minio
@@ -309,7 +309,7 @@ jobs:
       image: node:24-bookworm
     services:
       minio:
-        image: minio/server:RELEASE.2024-08-17T20-41-11Z
+        image: ghcr.io/minio/minio:latest
         options: --tmpfs /data:noatime
         env:
           MINIO_ROOT_USER: 123456
