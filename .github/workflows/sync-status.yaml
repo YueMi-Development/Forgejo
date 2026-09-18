@@ -1,0 +1,150 @@
+name: Sync Status
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: "Upstream repository (org/repo or URL)"
+        default: "https://codeberg.org/forgejo/forgejo.git"
+        required: true
+      upstream_branch:
+        description: "Upstream branch to compare"
+        default: "forgejo"
+        required: true
+      self_branch:
+        description: "This repo's branch to compare"
+        default: "forgejo"
+        required: true
+      fetch_depth:
+        description: "Git fetch depth (controls how far back history is fetched)"
+        default: "500"
+        required: false
+
+concurrency:
+  group: sync-status
+  cancel-in-progress: false
+
+jobs:
+  sync-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.self_branch || 'forgejo' }}
+          fetch-depth: ${{ inputs.fetch_depth || '500' }}
+
+      - name: Fetch upstream
+        id: fetch-upstream
+        env:
+          UPSTREAM_REPO: ${{ inputs.upstream_repo }}
+          UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
+        run: |
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream "$UPSTREAM_BRANCH" --depth ${{ inputs.fetch_depth || '500' }}
+          echo "upstream_repo=$UPSTREAM_REPO" >> $GITHUB_OUTPUT
+          echo "upstream_branch=$UPSTREAM_BRANCH" >> $GITHUB_OUTPUT
+          echo "upstream_head=$(git rev-parse upstream/$UPSTREAM_BRANCH)" >> $GITHUB_OUTPUT
+
+      - name: Compare branches
+        id: compare
+        env:
+          UPSTREAM_REPO: ${{ inputs.upstream_repo }}
+          UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
+          SELF_BRANCH: ${{ inputs.self_branch }}
+        run: |
+          set -x
+          SELF_HEAD=$(git rev-parse HEAD)
+          UPSTREAM_HEAD=$(git rev-parse upstream/$UPSTREAM_BRANCH)
+
+          echo "self_head=$SELF_HEAD" >> $GITHUB_OUTPUT
+          echo "self_repo=${{ github.repository }}" >> $GITHUB_OUTPUT
+          echo "self_branch=$SELF_BRANCH" >> $GITHUB_OUTPUT
+
+          echo "SELF_HEAD=$SELF_HEAD"
+          echo "UPSTREAM_HEAD=$UPSTREAM_HEAD"
+
+          # Same commit — no difference
+          if [[ "$SELF_HEAD" == "$UPSTREAM_HEAD" ]]; then
+            echo "result=SAME" >> $GITHUB_OUTPUT
+            echo "ahead=0" >> $GITHUB_OUTPUT
+            echo "behind=0" >> $GITHUB_OUTPUT
+            echo "RESULT=SAME ✅"
+            echo "### Result: **SAME** — no difference" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Check for merge base
+          set +e
+          MERGE_BASE=$(git merge-base HEAD upstream/$UPSTREAM_BRANCH 2>&1)
+          MRG_BASE_EXIT=$?
+          set -e
+          echo "MERGE_BASE=$MERGE_BASE merge-base exit=$MRG_BASE_EXIT"
+          if [[ $MRG_BASE_EXIT -ne 0 || -z "$MERGE_BASE" ]]; then
+            echo "result=CANNOT MERGE" >> $GITHUB_OUTPUT
+            echo "ahead=?" >> $GITHUB_OUTPUT
+            echo "behind=?" >> $GITHUB_OUTPUT
+            echo "RESULT=CANNOT MERGE ❌"
+            echo "### Result: **CANNOT MERGE** — no merge base (unrelated histories)" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Count commits ahead/behind
+          echo "Counting ahead commits..."
+          AHEAD=$(git log --oneline "$MERGE_BASE..HEAD" | wc -l | tr -d ' ')
+          echo "Counting behind commits..."
+          BEHIND=$(git log --oneline "$MERGE_BASE..upstream/$UPSTREAM_BRANCH" | wc -l | tr -d ' ')
+          echo "ahead=$AHEAD behind=$BEHIND"
+          echo "ahead=$AHEAD" >> $GITHUB_OUTPUT
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+
+          # Self is strictly behind upstream — fast-forward possible
+          if [[ "$SELF_HEAD" == "$MERGE_BASE" ]]; then
+            echo "result=CAN MERGE" >> $GITHUB_OUTPUT
+            echo "RESULT=CAN MERGE 🔄"
+            echo "### Result: **CAN MERGE** — fast-forward merge is possible" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Upstream is strictly behind self — nothing to merge
+          if [[ "$UPSTREAM_HEAD" == "$MERGE_BASE" ]]; then
+            echo "result=UP TO DATE" >> $GITHUB_OUTPUT
+            echo "RESULT=UP TO DATE ✅"
+            echo "### Result: **UP TO DATE** — all upstream commits already in this repo" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Both have new commits — test mergeability
+          echo "Testing merge..."
+          git merge --no-commit --no-ff upstream/$UPSTREAM_BRANCH > /dev/null 2>&1
+          MRG=$?
+          echo "merge exit code=$MRG"
+          if [[ $MRG -eq 0 ]]; then
+            git reset --hard HEAD > /dev/null
+            echo "result=CAN MERGE" >> $GITHUB_OUTPUT
+            echo "RESULT=CAN MERGE 🔄"
+            echo "### Result: **CAN MERGE** — branches diverged but merge is clean" >> $GITHUB_STEP_SUMMARY
+          else
+            git reset --hard HEAD > /dev/null
+            echo "result=CONFLICT MERGE" >> $GITHUB_OUTPUT
+            echo "RESULT=CONFLICT MERGE ⚠️"
+            echo "### Result: **CONFLICT MERGE** — branches diverged with conflicts" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Write step summary
+        run: |
+          echo "### Sync Status Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Upstream Repo | \`${{ inputs.upstream_repo }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Upstream Branch | \`${{ inputs.upstream_branch }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Self Repo | \`${{ github.repository }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Self Branch | \`${{ inputs.self_branch }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Upstream Commit | \`${{ steps.fetch-upstream.outputs.upstream_head }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Self Commit | \`${{ steps.compare.outputs.self_head }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ahead | ${{ steps.compare.outputs.ahead }} commits |" >> $GITHUB_STEP_SUMMARY
+          echo "| Behind | ${{ steps.compare.outputs.behind }} commits |" >> $GITHUB_STEP_SUMMARY
