@@ -130,6 +130,7 @@ jobs:
             dockerfile: Dockerfile
           - suffix: '-rootless'
             dockerfile: Dockerfile.rootless
+    name: build-container (amd64) ${{ matrix.suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -172,7 +173,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           build-args: |
             RELEASE_VERSION=${{ needs.determine-version.outputs.version }}
           dockerfile: ${{ matrix.dockerfile }}
