@@ -20,15 +20,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Backend checks
         run: |
           su forgejo -c './tools/cimake.sh pr-go'
-        env:
-          # Run as non-root user
-          HOME: /home/forgejo
 
   frontend-checks:
     runs-on: ubuntu-latest
@@ -44,7 +50,10 @@ jobs:
           node-version-file: .node-version
 
       - name: Install dependencies
-        run: make deps-frontend
+        run: |
+          apt-get update -qq
+          apt-get -q install -qq -y git make
+          make deps-frontend
 
       - name: Lint frontend
         run: make lint-frontend
@@ -62,7 +71,7 @@ jobs:
         run: make frontend
 
       - name: Install zstd
-        run: apt-get update -qq && apt-get -q install -qq -y zstd
+        run: apt-get -q install -qq -y zstd
 
       - name: Cache frontend build
         uses: actions/cache/save@v4
@@ -94,8 +103,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Test release-notes-assistant.sh
         run: |
@@ -132,8 +150,17 @@ jobs:
         with:
           fetch-depth: 20
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Restore frontend build
         id: cache-frontend
@@ -144,7 +171,9 @@ jobs:
 
       - name: Build frontend (if not cached)
         if: steps.cache-frontend.outputs.cache-hit != 'true'
-        run: su forgejo -c 'make deps-frontend frontend'
+        run: |
+          su forgejo -c 'make deps-frontend'
+          su forgejo -c 'make frontend'
 
       - name: Decide to run all tests
         id: run-all
@@ -198,8 +227,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Install git-lfs
         run: apt-get update -qq && apt-get -q install -qq -y git-lfs
@@ -236,8 +274,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Install git-lfs
         run: apt-get update -qq && apt-get -q install -qq -y git-lfs
@@ -271,8 +318,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Install git-lfs
         run: apt-get update -qq && apt-get -q install -qq -y git-lfs
@@ -308,8 +364,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Run remote cacher tests
         run: |
@@ -327,8 +392,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Restore coverage-unit
         id: coverage-unit
@@ -379,8 +453,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup environment
-        uses: ./.github/actions/setup-forgejo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup user
+        run: |
+          git config --global --add safe.directory '*'
+          adduser --quiet --comment forgejo --disabled-password forgejo || true
+          chown -R forgejo:forgejo $GITHUB_WORKSPACE
 
       - name: Install backend dependencies
         run: su forgejo -c 'make deps-backend deps-tools'
