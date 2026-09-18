@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: MIT
+name: 'Setup Forgejo Build Environment'
+description: 'Setup Go, Node.js, and dependencies for Forgejo builds'
+inputs:
+  username:
+    description: 'User for which to manage the dependency cache'
+    default: root
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup safe directory
+      shell: bash
+      run: git config --global --add safe.directory '*'
+
+    - name: Install system dependencies
+      shell: bash
+      run: |
+        if command -v apt-get &> /dev/null; then
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get -q install -qq -y zstd git git-lfs make
+        fi
+
+    - name: Create user if not root
+      if: inputs.username != 'root'
+      shell: bash
+      run: |
+        if ! id "${{ inputs.username }}" &>/dev/null; then
+          useradd --create-home --shell /bin/bash ${{ inputs.username }}
+        fi
+        chown -R ${{ inputs.username }}:${{ inputs.username }} $GITHUB_WORKSPACE
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: Setup Go cache
+      if: inputs.username != 'root'
+      shell: bash
+      run: |
+        GOROOT="$(go env GOROOT)"
+        MODCACHE="$(su ${{ inputs.username }} -c "${GOROOT}/bin/go env GOMODCACHE")"
+        CACHEDIR="$(su ${{ inputs.username }} -c "${GOROOT}/bin/go env GOCACHE")"
+        su ${{ inputs.username }} -c "mkdir -p \"${MODCACHE}\" \"${CACHEDIR}\""
+        chmod 755 $HOME
+
+    - name: Restore Go dependencies cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: go-${{ runner.os }}-${{ inputs.username }}-${{ hashFiles('go.sum', 'go.mod', 'Makefile') }}
+        restore-keys: |
+          go-${{ runner.os }}-${{ inputs.username }}-
+
+    - name: Validate Go version
+      shell: bash
+      run: |
+        set -ex
+        toolchain=$(grep -oP '(?<=toolchain ).+' go.mod)
+        version=$(go version | cut -d' ' -f3)
+        if dpkg --compare-versions ${version#go} lt ${toolchain#go}; then
+          echo "go version too low: $toolchain >= $version"
+          exit 1
+        fi
+
+    - name: Setup Node.js
+      if: runner.os != 'Windows'
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+
+    - name: Install frontend dependencies
+      if: runner.os != 'Windows'
+      shell: bash
+      run: make deps-frontend

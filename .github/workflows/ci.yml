@@ -1,0 +1,344 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - 'forgejo*'
+      - 'v*/forgejo*'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_COLOR: 1
+
+jobs:
+  backend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Backend checks
+        run: ./tools/cimake.sh pr-go
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install frontend dependencies
+        run: make deps-frontend
+
+      - name: Lint frontend
+        run: make lint-frontend
+
+      - name: Check frontend
+        run: make checks-frontend
+
+      - name: Test frontend (Europe/Berlin)
+        run: TZ=Europe/Berlin make test-frontend-coverage
+
+      - name: Test frontend (America/Edmonton)
+        run: TZ=America/Edmonton make test-frontend-coverage
+
+      - name: Build frontend
+        run: make frontend
+
+      - name: Install zstd
+        run: sudo apt-get update -qq && sudo apt-get -q install -qq -y zstd
+
+  test-unit:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.17.24
+        options: --tmpfs /usr/share/elasticsearch/data:noatime
+        ports:
+          - 9200:9200
+        env:
+          discovery.type: single-node
+          ES_JAVA_OPTS: '-Xms512m -Xmx512m'
+          xpack.security.enabled: 'false'
+      minio:
+        image: pgsty/silo
+        options: --tmpfs /data:noatime
+        ports:
+          - 9000:9000
+        env:
+          MINIO_DOMAIN: localhost
+          MINIO_ROOT_USER: 123456
+          MINIO_ROOT_PASSWORD: 12345678
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test release-notes-assistant.sh
+        run: |
+          sudo apt-get update -qq && sudo apt-get -q install -qq -y jq
+          ./release-notes-assistant.sh test_main
+
+      - name: Run unit tests with coverage
+        run: make COVERAGE_TEST_ARGS=-race coverage-run
+        timeout-minutes: 120
+        env:
+          RACE_ENABLED: 'true'
+          TAGS: bindata
+          TEST_ELASTICSEARCH_URL: http://localhost:9200
+          TEST_MINIO_ENDPOINT: localhost:9000
+
+      - name: Check test results
+        run: make test-check
+
+  test-e2e:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install frontend dependencies
+        run: make deps-frontend
+
+      - name: Build frontend
+        run: make frontend
+
+      - name: Decide to run all tests
+        id: run-all
+        if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'run-all-playwright-tests') || contains(github.event.pull_request.title, 'playwright')
+        run: echo "all=1" >> "$GITHUB_OUTPUT"
+
+      - name: Get changed files
+        if: github.event_name == 'pull_request'
+        id: changed-files
+        uses: tj-actions/changed-files@v47
+        with:
+          separator: '\n'
+
+      - name: Install browser dependencies
+        run: |
+          npx playwright install-deps
+
+      - name: Run E2E tests
+        run: |
+          make generate
+          make coverage-run-e2e
+        timeout-minutes: 120
+        env:
+          USE_REPO_TEST_DIR: 1
+          CHANGED_FILES: ${{steps.changed-files.outputs.all_changed_files}}
+          RUN_ALL: ${{steps.run-all.all}}
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: tests/e2e/test-artifacts/
+          retention-days: 3
+
+  test-sqlite:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install git-lfs
+        run: sudo apt-get update -qq && sudo apt-get -q install -qq -y git-lfs
+
+      - name: Run SQLite integration tests
+        run: |
+          make test-sqlite-migration
+          make coverage-run-sqlite
+        timeout-minutes: 120
+        env:
+          TAGS: sqlite sqlite_unlock_notify
+          TEST_TAGS: sqlite sqlite_unlock_notify
+          USE_REPO_TEST_DIR: 1
+
+  test-mariadb:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    services:
+      mysql:
+        image: mariadb:11
+        ports:
+          - 3306:3306
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: testgitea
+        options: --tmpfs /var/lib/mysql:noatime
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install git-lfs
+        run: sudo apt-get update -qq && sudo apt-get -q install -qq -y git-lfs
+
+      - name: Run MariaDB integration tests
+        run: |
+          make test-mysql-migration test-mariadb
+        timeout-minutes: 120
+        env:
+          TEST_MYSQL_HOST: 127.0.0.1:3306
+          USE_REPO_TEST_DIR: 1
+
+  test-pgsql:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    services:
+      minio:
+        image: pgsty/silo
+        ports:
+          - 9000:9000
+        options: --tmpfs /data:noatime
+        env:
+          MINIO_DOMAIN: localhost
+          MINIO_ROOT_USER: 123456
+          MINIO_ROOT_PASSWORD: 12345678
+      pgsql:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_DB: test
+          POSTGRES_PASSWORD: postgres
+        options: --tmpfs /var/lib/postgresql/data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install git-lfs
+        run: sudo apt-get update -qq && sudo apt-get -q install -qq -y git-lfs
+
+      - name: Run PostgreSQL integration tests
+        run: |
+          make test-pgsql-migration test-pgsql
+        timeout-minutes: 120
+        env:
+          RACE_ENABLED: true
+          USE_REPO_TEST_DIR: 1
+          TEST_PGSQL_HOST: 127.0.0.1:5432
+
+  test-remote-cacher:
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    strategy:
+      matrix:
+        include:
+          - cacher: redis
+            image: redis:7.2-alpine
+            options: --tmpfs /data:noatime
+          - cacher: valkey
+            image: valkey/valkey:7.2-alpine
+            options: --tmpfs /data:noatime
+    name: test-remote-cacher (${{ matrix.cacher }})
+    services:
+      cacher:
+        image: ${{ matrix.cacher.image }}
+        ports:
+          - 6379:6379
+        options: ${{ matrix.cacher.options }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run remote cacher tests
+        run: |
+          make test-remote-cacher test-check
+        timeout-minutes: 120
+        env:
+          RACE_ENABLED: 'true'
+          TAGS: bindata
+          TEST_REDIS_SERVER: localhost:6379
+
+  security-check:
+    runs-on: ubuntu-latest
+    needs: [test-sqlite, test-pgsql, test-mariadb, test-remote-cacher, test-unit]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install backend dependencies
+        run: make deps-backend deps-tools
+
+      - name: Run security check
+        run: make security-check
+
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate semgrep rules
+        run: semgrep validate .semgrep/config
+
+      - name: Test semgrep rules
+        run: semgrep --test .semgrep/tests/ --config .semgrep/config/
+
+      - name: Run semgrep ci
+        run: semgrep ci --config .semgrep/config/ --metrics=off
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}

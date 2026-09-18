@@ -119,8 +119,10 @@ jobs:
 
           # Both have new commits — test mergeability
           echo "Testing merge..."
+          set +e
           git merge --no-commit --no-ff upstream/$UPSTREAM_BRANCH > /dev/null 2>&1
           MRG=$?
+          set -e
           echo "merge exit code=$MRG"
           if [[ $MRG -eq 0 ]]; then
             git reset --hard HEAD > /dev/null
