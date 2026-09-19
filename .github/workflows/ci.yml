@@ -268,6 +268,7 @@ jobs:
           RACE_ENABLED: true
           USE_REPO_TEST_DIR: 1
           TEST_PGSQL_HOST: 127.0.0.1:5432
+          TEST_S3_HOST: 127.0.0.1:9000
 
   test-remote-cacher:
     runs-on: ubuntu-latest
