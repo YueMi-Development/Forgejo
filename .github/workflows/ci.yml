@@ -82,7 +82,7 @@ jobs:
         ports:
           - 9000:9000
         env:
-          MINIO_DOMAIN: localhost
+          MINIO_DOMAIN: 127.0.0.1
           MINIO_ROOT_USER: 123456
           MINIO_ROOT_PASSWORD: 12345678
     steps:
@@ -106,7 +106,7 @@ jobs:
           RACE_ENABLED: 'true'
           TAGS: bindata
           TEST_ELASTICSEARCH_URL: http://localhost:9200
-          TEST_MINIO_ENDPOINT: localhost:9000
+          TEST_MINIO_ENDPOINT: 127.0.0.1:9000
 
       - name: Check test results
         run: make test-check
@@ -237,7 +237,7 @@ jobs:
           - 9000:9000
         options: --tmpfs /data:noatime
         env:
-          MINIO_DOMAIN: localhost
+          MINIO_DOMAIN: 127.0.0.1
           MINIO_ROOT_USER: 123456
           MINIO_ROOT_PASSWORD: 12345678
       pgsql:
