@@ -257,6 +257,12 @@ var ignoredErrorMessage = []string{
 	`:GetIssuesAllCommitStatus() [E] Cannot open git repository <Repository 23:org17/big_test_public_4> for issue #1[20]. Error: no such file or directory`,
 	// TestBaseTemplateTitle
 	`:RepoAssignment() [E] Repository <Repository 23:org17/big_test_public_4> has a broken repository on the file system:`,
+	// IssueChangeLabels on a broken/empty repo: triggered by API label tests
+	// after a prior test deleted the git directory.
+	`Notify() [E] an error occurred while executing the IssueChangeLabels actions method: git.OpenRepository: no such file or directory`,
+	// DeleteRepository: CloseRepoBranchesPulls logs and continues when the git
+	// directory has already been removed.
+	`services/repository/repository.go:58:DeleteRepository() [E] CloseRepoBranchesPulls failed: no such file or directory`,
 	// TestMigrate
 	`] for OwnerID[2] failed: error while listing issues: token does not have at least one of required scope(s): [read:issue]`,
 	// TestMigrate
