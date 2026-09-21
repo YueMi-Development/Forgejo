@@ -234,10 +234,16 @@ func ToAPIPullRequest(ctx context.Context, pr *issues_model.PullRequest, doer *u
 		// Calculate diff
 		startCommitID = pr.MergeBase
 
-		// startCommitID is already merge-base with endCommitID we can directly compare.
-		apiPullRequest.ChangedFiles, apiPullRequest.Additions, apiPullRequest.Deletions, err = gitRepo.GetShortStat(startCommitID, endCommitID, false)
-		if err != nil {
-			log.Error("GetShortStat: %v", err)
+		// Only calculate the diff when both endpoints still resolve. A deleted PR
+		// branch can legitimately leave endCommitID empty, and a PR with no
+		// merge-base yet (e.g. a freshly created AGit-style PR) leaves
+		// startCommitID empty. Skip the diff in those cases instead of treating
+		// them as fatal errors.
+		if startCommitID != "" && endCommitID != "" {
+			apiPullRequest.ChangedFiles, apiPullRequest.Additions, apiPullRequest.Deletions, err = gitRepo.GetShortStat(startCommitID, endCommitID, false)
+			if err != nil {
+				log.Warn("GetShortStat[%d]: %v", pr.ID, err)
+			}
 		}
 	}
 

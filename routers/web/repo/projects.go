@@ -584,13 +584,13 @@ func MoveIssues(ctx *context.Context) {
 
 	for _, issue := range existingIssues {
 		if issue.RepoID != project.RepoID {
-			ctx.ServerError("Some issue's repoID is not equal to project's repoID", errors.New("Some issue's repoID is not equal to project's repoID"))
+			ctx.ServerErrorWarn("Some issue's repoID is not equal to project's repoID", errors.New("Some issue's repoID is not equal to project's repoID"))
 			return
 		}
 	}
 
 	if err = project_service.MoveIssuesOnProjectColumn(ctx, column, form); err != nil {
-		ctx.ServerError("MoveIssuesOnProjectColumn", err)
+		ctx.ServerErrorWarn("MoveIssuesOnProjectColumn", err)
 		return
 	}
 

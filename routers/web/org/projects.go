@@ -547,12 +547,12 @@ func MoveIssues(ctx *context.Context) {
 	}
 
 	if err = project_service.ValidIssueIDs(ctx, project.OwnerID, existingIssues); err != nil {
-		ctx.ServerError("ValidIssueID", err)
+		ctx.ServerErrorWarn("ValidIssueID", err)
 		return
 	}
 
 	if err = project_service.MoveIssuesOnProjectColumn(ctx, column, form); err != nil {
-		ctx.ServerError("MoveIssuesOnProjectColumn", err)
+		ctx.ServerErrorWarn("MoveIssuesOnProjectColumn", err)
 		return
 	}
 

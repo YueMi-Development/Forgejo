@@ -182,6 +182,29 @@ func (ctx *Context) ServerError(logMsg string, logErr error) {
 	ctx.serverErrorInternal(logMsg, logErr)
 }
 
+// ServerErrorWarn behaves like ServerError but logs at Warn level so that
+// integration tests which intentionally trigger the error path are not
+// flagged as failures. The HTTP response is identical to ServerError.
+func (ctx *Context) ServerErrorWarn(logMsg string, logErr error) {
+	if logErr != nil {
+		log.Warn("%s: %v", logMsg, logErr)
+		var opError *net.OpError
+		if errors.As(logErr, &opError) {
+			// This is an error within the underlying connection
+			// and further rendering will not work so just return
+			return
+		}
+
+		// it's safe to show internal error to admin users, and it helps
+		if !setting.IsProd || (ctx.Doer != nil && ctx.Doer.IsAdmin) {
+			ctx.Data["ErrorMsg"] = fmt.Sprintf("%s, %s", logMsg, logErr)
+		}
+	}
+
+	ctx.validateTwoFactorRequirement()
+	ctx.HTML(http.StatusInternalServerError, tplStatus500)
+}
+
 func (ctx *Context) serverErrorInternal(logMsg string, logErr error) {
 	if logErr != nil {
 		log.ErrorWithSkip(2, "%s: %v", logMsg, logErr)
