@@ -32,7 +32,7 @@ var WriterCloser = &testLoggerWriterCloser{}
 // ExpectedErrors tracks error substrings that the current test
 // intentionally triggers. Anything matching a registered pattern is
 // logged at its normal level but never escalates to a test failure.
-// Tests register patterns via test.DeclareExpectedErrors and the
+// Tests register patterns via DeclareExpectedErrors and the
 // registration is removed automatically when the test finishes.
 var ExpectedErrors = &expectedErrors{patterns: map[string][]string{}}
 
@@ -73,6 +73,27 @@ func (e *expectedErrors) Match(testName, msg string) bool {
 		}
 	}
 	return false
+}
+
+// DeclareExpectedErrors marks the listed log message substrings as
+// expected for the duration of the current test. The messages will
+// still be logged at their normal level, but they will not cause the
+// test to fail. Registration is removed automatically when the test
+// finishes via t.Cleanup.
+//
+// Use this for negative tests that intentionally exercise invalid
+// input or invalid state. Production logging is unchanged; only the
+// test logger's failure escalation is suppressed for the registered
+// substrings.
+//
+// The helper lives in modules/testlogger rather than modules/test so
+// that callers in modules/setting/*_test.go (which already import
+// modules/test) do not pull modules/testlogger transitively and
+// create an import cycle with modules/setting via modules/queue.
+func DeclareExpectedErrors(t testing.TB, patterns ...string) {
+	t.Helper()
+	ExpectedErrors.Add(t.Name(), patterns...)
+	t.Cleanup(func() { ExpectedErrors.Remove(t.Name()) })
 }
 
 type testLoggerWriterCloser struct {
@@ -432,7 +453,7 @@ func (w *testLoggerWriterCloser) recordError(msg string) {
 	// Per-test expected-error registry: a negative test may legitimately
 	// trigger a log.Error that the global ignore list does not cover.
 	// Such tests register the substrings they expect with
-	// test.DeclareExpectedErrors; consult that registry before
+	// DeclareExpectedErrors; consult that registry before
 	// escalating the error to a test failure.
 	w.RLock()
 	testName := ""

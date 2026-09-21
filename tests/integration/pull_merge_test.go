@@ -41,6 +41,7 @@ import (
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
 	"forgejo.org/modules/test"
+	"forgejo.org/modules/testlogger"
 	"forgejo.org/modules/translation"
 	"forgejo.org/services/automerge"
 	app_context "forgejo.org/services/context"
@@ -824,7 +825,7 @@ func TestPullMergeBranchProtect(t *testing.T) {
 				t.Run(testCase.name+" "+withAPIOrWeb, func(t *testing.T) {
 					defer tests.PrintCurrentTest(t)()
 					if testCase.expectedCode[withAPIOrWeb] != http.StatusOK {
-						defer test.DeclareExpectedErrors(t, "Does not have enough approvals")
+						defer testlogger.DeclareExpectedErrors(t, "Does not have enough approvals")
 					}
 					branch := testCase.name + "-" + withAPIOrWeb
 					unprotected := branch + "-unprotected"

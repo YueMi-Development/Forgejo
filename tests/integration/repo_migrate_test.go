@@ -12,7 +12,7 @@ import (
 
 	auth_model "forgejo.org/models/auth"
 	"forgejo.org/modules/structs"
-	"forgejo.org/modules/test"
+	"forgejo.org/modules/testlogger"
 	"forgejo.org/modules/translation"
 	"forgejo.org/tests"
 
@@ -64,7 +64,7 @@ func TestRepoMigrateCredentials(t *testing.T) {
 
 	t.Run("Web route", func(t *testing.T) {
 		defer tests.PrintCurrentTest(t)()
-		defer test.DeclareExpectedErrors(t, "migration/cloning from 'example.com' is not allowed: the provided url contains credentials")
+		defer testlogger.DeclareExpectedErrors(t, "migration/cloning from 'example.com' is not allowed: the provided url contains credentials")
 
 		resp := session.MakeRequest(t, NewRequestWithValues(t, "POST", "/repo/migrate?service_type=1", map[string]string{
 			"clone_addr": cloneAddr,
@@ -82,7 +82,7 @@ func TestRepoMigrateCredentials(t *testing.T) {
 
 	t.Run("API route", func(t *testing.T) {
 		defer tests.PrintCurrentTest(t)()
-		defer test.DeclareExpectedErrors(t, "migration/cloning from 'example.com' is not allowed: the provided url contains credentials")
+		defer testlogger.DeclareExpectedErrors(t, "migration/cloning from 'example.com' is not allowed: the provided url contains credentials")
 
 		token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
 		resp := MakeRequest(t, NewRequestWithJSON(t, "POST", "/api/v1/repos/migrate", &structs.MigrateRepoOptions{
