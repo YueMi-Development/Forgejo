@@ -255,6 +255,8 @@ var ignoredErrorMessage = []string{
 	`:GetIssuesAllCommitStatus() [E] getAllCommitStatus: can't get commit statuses of pull [6]: object does not exist [id: refs/pull/2/head, rel_path: ]`,
 	// TestLinksLogin
 	`:GetIssuesAllCommitStatus() [E] Cannot open git repository <Repository 23:org17/big_test_public_4> for issue #1[20]. Error: no such file or directory`,
+	// TestBaseTemplateTitle
+	`:RepoAssignment() [E] Repository <Repository 23:org17/big_test_public_4> has a broken repository on the file system:`,
 	// TestMigrate
 	`] for OwnerID[2] failed: error while listing issues: token does not have at least one of required scope(s): [read:issue]`,
 	// TestMigrate

@@ -30,6 +30,10 @@ func TestMinioStorageIterator(t *testing.T) {
 		t.Skip("TEST_MINIO_ENDPOINT not set")
 		return
 	}
+	if !probeMinioEndpoint(t, endpoint) {
+		t.Skipf("TEST_MINIO_ENDPOINT %s is not reachable", endpoint)
+		return
+	}
 	testStorageIterator(t, setting.MinioStorageType, &setting.Storage{
 		MinioConfig: setting.MinioStorageConfig{
 			Endpoint:        endpoint,
@@ -45,6 +49,10 @@ func TestVirtualHostMinioStorage(t *testing.T) {
 	endpoint := os.Getenv("TEST_MINIO_ENDPOINT")
 	if endpoint == "" {
 		t.Skip("TEST_MINIO_ENDPOINT not set")
+		return
+	}
+	if !probeMinioEndpoint(t, endpoint) {
+		t.Skipf("TEST_MINIO_ENDPOINT %s is not reachable", endpoint)
 		return
 	}
 	testStorageIterator(t, setting.MinioStorageType, &setting.Storage{
@@ -93,10 +101,32 @@ func TestMinioStoragePath(t *testing.T) {
 	assert.Equal(t, "base/a/", m.buildMinioDirPrefix("/a/"))
 }
 
+// probeMinioEndpoint does a quick TCP dial against the configured endpoint so
+// the live-server tests can skip early when no MinIO server is reachable,
+// instead of waiting for the client to time out and failing the whole suite.
+func probeMinioEndpoint(t *testing.T, endpoint string) bool {
+	t.Helper()
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		// Bare hostname without port; assume default MinIO port.
+		host, port = endpoint, "9000"
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 func TestS3StorageBadRequest(t *testing.T) {
 	endpoint := os.Getenv("TEST_MINIO_ENDPOINT")
 	if endpoint == "" {
 		t.Skip("TEST_MINIO_ENDPOINT not set")
+		return
+	}
+	if !probeMinioEndpoint(t, endpoint) {
+		t.Skipf("TEST_MINIO_ENDPOINT %s is not reachable", endpoint)
 		return
 	}
 	cfg := &setting.Storage{

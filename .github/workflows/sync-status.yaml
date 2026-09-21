@@ -22,6 +22,10 @@ on:
         default: "500"
         required: false
 
+env:
+  UPSTREAM_REPO: ${{ inputs.upstream_repo || 'https://codeberg.org/forgejo/forgejo.git' }}
+  UPSTREAM_BRANCH: ${{ inputs.upstream_branch || 'forgejo' }}
+
 concurrency:
   group: sync-status
   cancel-in-progress: false
@@ -38,9 +42,6 @@ jobs:
 
       - name: Fetch upstream
         id: fetch-upstream
-        env:
-          UPSTREAM_REPO: ${{ inputs.upstream_repo }}
-          UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
         run: |
           git remote remove upstream 2>/dev/null || true
           git remote add upstream "$UPSTREAM_REPO"
@@ -52,8 +53,6 @@ jobs:
       - name: Compare branches
         id: compare
         env:
-          UPSTREAM_REPO: ${{ inputs.upstream_repo }}
-          UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
           SELF_BRANCH: ${{ inputs.self_branch }}
         run: |
           set -x
@@ -119,8 +118,10 @@ jobs:
 
           # Both have new commits — test mergeability
           echo "Testing merge..."
+          set +e
           git merge --no-commit --no-ff upstream/$UPSTREAM_BRANCH > /dev/null 2>&1
           MRG=$?
+          set -e
           echo "merge exit code=$MRG"
           if [[ $MRG -eq 0 ]]; then
             git reset --hard HEAD > /dev/null

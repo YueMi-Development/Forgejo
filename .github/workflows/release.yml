@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  push:
+    tags: 'v[0-9]+.[0-9]+.*'
+    branches:
+      - 'forgejo'
+      - 'v*/forgejo'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.0.0)'
+        required: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  determine-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_release: ${{ steps.version.outputs.is_release }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event.inputs.version }}" != "" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" =~ ^refs/tags/ ]]; then
+            version=${${{ github.ref_name }}#v}
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            version=$(git tag -l --sort=version:refname --merged | grep -v -e '-test$' | tail -1 | sed -E -e 's/^(v[0-9]+\.[0-9]+).*/\1/')-test
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-sources:
+    runs-on: ubuntu-latest
+    needs: [determine-version]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Get version info
+        run: |
+          echo "Building version: ${{ needs.determine-version.outputs.version }}"
+          echo "Is release: ${{ needs.determine-version.outputs.is_release }}"
+          echo "SHA: ${{ needs.determine-version.outputs.sha }}"
+
+      - name: Build sources tarball
+        run: |
+          chown -R $(id -u):$(id -g) .
+          make VERSION=${{ needs.determine-version.outputs.version }} TAGS=bindata backend
+          mkdir -p release
+          mv gitea release/
+
+      - name: Verify build
+        run: |
+          test -f release/gitea
+          file release/gitea
+
+      - name: Upload backend binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: forgejo
+          path: release/gitea
+          retention-days: 5
+
+  build-backend:
+    runs-on: ubuntu-latest
+    needs: [determine-version]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build backend
+        run: |
+          make backend
+        env:
+          TAGS: bindata
+
+      - name: Upload backend
+        uses: actions/upload-artifact@v4
+        with:
+          name: forgejo
+          path: release/gitea
+          retention-days: 5
+
+  build-container:
+    needs: [determine-version]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+        type:
+          - suffix: ''
+            dockerfile: Dockerfile
+          - suffix: '-rootless'
+            dockerfile: Dockerfile.rootless
+    name: build-container (${{ matrix.os.platform }}${{ matrix.type.suffix }})
+    runs-on: ${{ matrix.os.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.type.suffix }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Build and push container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ matrix.os.platform }}
+          build-args: |
+            RELEASE_VERSION=${{ needs.determine-version.outputs.version }}
+          dockerfile: ${{ matrix.type.dockerfile }}
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: [determine-version, build-container, build-backend, build-sources]
+    if: needs.determine-version.outputs.is_release == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          tag_name: v${{ needs.determine-version.outputs.version }}
+          name: Forgejo v${{ needs.determine-version.outputs.version }}
+          body: |
+            See [release notes](https://codeberg.org/forgejo/forgejo/src/branch/forgejo/release-notes-published/${{ needs.determine-version.outputs.version }}.md)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
