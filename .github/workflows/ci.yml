@@ -96,7 +96,7 @@ jobs:
         env:
           RACE_ENABLED: 'true'
           TAGS: bindata
-          TEST_ELASTICSEARCH_URL: http://localhost:9200
+          TEST_ELASTICSEARCH_URL: http://127.0.0.1:9200
 
       - name: Check test results
         run: make test-check
