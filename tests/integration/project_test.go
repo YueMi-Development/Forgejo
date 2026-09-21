@@ -1892,6 +1892,7 @@ func TestProjectWebSetDefaultProjectColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer test.DeclareExpectedErrors(t, "column ID must not be empty")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/0/default", tt.owner, tt.repo, tt.projectID)
 			resp := sessionPOST(t, session, url, http.StatusInternalServerError)
@@ -2030,6 +2031,7 @@ func TestProjectWebMoveIssues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer test.DeclareExpectedErrors(t, "column ID must not be empty")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/0/move", tt.owner, tt.repo, tt.projectID)
 			moveOpts := &project_structs.MovedIssuesOption{}
@@ -2073,6 +2075,7 @@ func TestProjectWebMoveIssues(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
+			defer test.DeclareExpectedErrors(t, "all issues must belong to the specified project")
 			session := loginUser(t, user.Name)
 
 			// create test column

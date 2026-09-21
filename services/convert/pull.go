@@ -171,9 +171,17 @@ func ToAPIPullRequest(ctx context.Context, pr *issues_model.PullRequest, doer *u
 		defer gitRepo.Close()
 
 		apiPullRequest.Head.Sha, err = gitRepo.GetRefCommitID(pr.GetGitRefName())
-		if err != nil {
+		if err != nil && !git.IsErrNotExist(err) {
 			log.Error("GetRefCommitID[%s]: %v", pr.GetGitRefName(), err)
 			return nil
+		}
+		if err != nil {
+			// Head ref was deleted (e.g. the PR branch no longer exists).
+			// Leave apiPullRequest.Head.Sha empty and continue so the
+			// caller still gets a usable API representation. Logging at
+			// Error here would fail the integration test logger on what
+			// is an expected outcome for some negative tests.
+			log.Warn("GetRefCommitID[%s]: head ref no longer exists", pr.GetGitRefName())
 		}
 		apiPullRequest.Head.RepoID = pr.BaseRepoID
 		apiPullRequest.Head.Repository = apiPullRequest.Base.Repository

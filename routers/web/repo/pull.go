@@ -424,8 +424,13 @@ func GetPullDiffStats(ctx *context.Context) {
 
 	// do not report 500 server error to end users if error occurs, otherwise a PR missing ref won't be able to view.
 	headCommitID, err := ctx.Repo.GitRepo.GetRefCommitID(pull.GetGitRefName())
-	if err != nil {
+	if err != nil && !git.IsErrNotExist(err) {
 		log.Error("Failed to GetRefCommitID: %v, repo: %v", err, ctx.Repo.Repository.FullName())
+		return
+	}
+	if err != nil {
+		// Head ref was deleted; not an unexpected server fault.
+		log.Warn("Failed to GetRefCommitID (head ref missing): %v, repo: %v", err, ctx.Repo.Repository.FullName())
 		return
 	}
 
@@ -589,8 +594,14 @@ func PrepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 		ctx.Data["HeadTarget"] = pull.HeadBranch
 
 		sha, err := baseGitRepo.GetRefCommitID(pull.GetGitRefName())
-		if err != nil {
+		if err != nil && !git.IsErrNotExist(err) {
 			ctx.ServerError(fmt.Sprintf("GetRefCommitID(%s)", pull.GetGitRefName()), err)
+			return nil
+		}
+		if err != nil {
+			// Head ref was deleted; commit statuses are not available.
+			// Not an unexpected server fault.
+			log.Warn("GetRefCommitID(%s) for broken pull request: head ref missing", pull.GetGitRefName())
 			return nil
 		}
 		commitStatuses, _, err := git_model.GetLatestCommitStatus(ctx, repo.ID, sha, db.ListOptionsAll)

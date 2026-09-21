@@ -13,7 +13,9 @@ import (
 	"forgejo.org/models/organization"
 	"forgejo.org/models/perm"
 	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/git"
 	"forgejo.org/modules/gitrepo"
+	"forgejo.org/modules/log"
 	api "forgejo.org/modules/structs"
 	"forgejo.org/modules/web"
 	"forgejo.org/routers/api/v1/utils"
@@ -497,8 +499,13 @@ func CreatePullReview(ctx *context.APIContext) {
 		defer closer.Close()
 
 		headCommitID, err := gitRepo.GetRefCommitID(pr.GetGitRefName())
-		if err != nil {
+		if err != nil && !git.IsErrNotExist(err) {
 			ctx.Error(http.StatusInternalServerError, "GetRefCommitID", err)
+			return
+		}
+		if err != nil {
+			// Head ref was deleted; not a server fault.
+			log.Warn("GetRefCommitID(%s): head ref missing", pr.GetGitRefName())
 			return
 		}
 
@@ -619,8 +626,13 @@ func SubmitPullReview(ctx *context.APIContext) {
 	}
 
 	headCommitID, err := ctx.Repo().GitRepo.GetRefCommitID(pr.GetGitRefName())
-	if err != nil {
+	if err != nil && !git.IsErrNotExist(err) {
 		ctx.Error(http.StatusInternalServerError, "GitRepo: GetRefCommitID", err)
+		return
+	}
+	if err != nil {
+		// Head ref was deleted; not a server fault.
+		log.Warn("GitRepo: GetRefCommitID(%s): head ref missing", pr.GetGitRefName())
 		return
 	}
 

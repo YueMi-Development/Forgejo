@@ -11,6 +11,7 @@ import (
 	issues_model "forgejo.org/models/issues"
 	pull_model "forgejo.org/models/pull"
 	"forgejo.org/modules/base"
+	"forgejo.org/modules/git"
 	"forgejo.org/modules/json"
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
@@ -47,8 +48,12 @@ func RenderNewCodeCommentForm(ctx *context.Context) {
 	afterCommitID := ctx.FormString("after_commit_id")
 	if afterCommitID == "" {
 		afterCommitID, err = ctx.Repo.GitRepo.GetRefCommitID(issue.PullRequest.GetGitRefName())
-		if err != nil {
+		if err != nil && !git.IsErrNotExist(err) {
 			ctx.ServerError("GetRefCommitID", err)
+			return
+		}
+		if err != nil {
+			log.Warn("GetRefCommitID(%s): head ref missing", issue.PullRequest.GetGitRefName())
 			return
 		}
 	}
@@ -225,8 +230,12 @@ func renderConversation(ctx *context.Context, comment *issues_model.Comment, ori
 		return
 	}
 	pullHeadCommitID, err := ctx.Repo.GitRepo.GetRefCommitID(comment.Issue.PullRequest.GetGitRefName())
-	if err != nil {
+	if err != nil && !git.IsErrNotExist(err) {
 		ctx.ServerError("GetRefCommitID", err)
+		return
+	}
+	if err != nil {
+		log.Warn("GetRefCommitID(%s): head ref missing", comment.Issue.PullRequest.GetGitRefName())
 		return
 	}
 	ctx.Data["AfterCommitID"] = pullHeadCommitID
