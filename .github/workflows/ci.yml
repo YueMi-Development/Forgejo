@@ -297,7 +297,7 @@ jobs:
         env:
           RACE_ENABLED: 'true'
           TAGS: bindata
-          TEST_REDIS_SERVER: localhost:6379
+          TEST_REDIS_SERVER: 127.0.0.1:6379
 
   security-check:
     runs-on: ubuntu-latest
