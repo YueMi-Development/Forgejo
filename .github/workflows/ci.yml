@@ -76,15 +76,6 @@ jobs:
           discovery.type: single-node
           ES_JAVA_OPTS: '-Xms512m -Xmx512m'
           xpack.security.enabled: 'false'
-      minio:
-        image: pgsty/silo
-        options: --tmpfs /data:noatime
-        ports:
-          - 9000:9000
-        env:
-          MINIO_DOMAIN: 127.0.0.1
-          MINIO_ROOT_USER: 123456
-          MINIO_ROOT_PASSWORD: 12345678
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,7 +97,6 @@ jobs:
           RACE_ENABLED: 'true'
           TAGS: bindata
           TEST_ELASTICSEARCH_URL: http://localhost:9200
-          TEST_MINIO_ENDPOINT: 127.0.0.1:9000
 
       - name: Check test results
         run: make test-check
@@ -240,6 +230,7 @@ jobs:
           MINIO_DOMAIN: 127.0.0.1
           MINIO_ROOT_USER: 123456
           MINIO_ROOT_PASSWORD: 12345678
+        command: server /data
       pgsql:
         image: postgres:16
         ports:
