@@ -823,6 +823,9 @@ func TestPullMergeBranchProtect(t *testing.T) {
 			for _, withAPIOrWeb := range []string{"api", "web"} {
 				t.Run(testCase.name+" "+withAPIOrWeb, func(t *testing.T) {
 					defer tests.PrintCurrentTest(t)()
+					if testCase.expectedCode[withAPIOrWeb] != http.StatusOK {
+						defer test.DeclareExpectedErrors(t, "Does not have enough approvals")
+					}
 					branch := testCase.name + "-" + withAPIOrWeb
 					unprotected := branch + "-unprotected"
 					doGitCheckoutBranch(dstPath, "master")(t)

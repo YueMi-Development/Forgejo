@@ -29,6 +29,52 @@ var (
 
 var WriterCloser = &testLoggerWriterCloser{}
 
+// ExpectedErrors tracks error substrings that the current test
+// intentionally triggers. Anything matching a registered pattern is
+// logged at its normal level but never escalates to a test failure.
+// Tests register patterns via test.DeclareExpectedErrors and the
+// registration is removed automatically when the test finishes.
+var ExpectedErrors = &expectedErrors{patterns: map[string][]string{}}
+
+type expectedErrors struct {
+	mu       sync.Mutex
+	patterns map[string][]string // test name → substrings
+}
+
+func (e *expectedErrors) Add(testName string, patterns ...string) {
+	if testName == "" || len(patterns) == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.patterns[testName] = append(e.patterns[testName], patterns...)
+}
+
+func (e *expectedErrors) Remove(testName string) {
+	if testName == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.patterns, testName)
+}
+
+// Match returns true if msg contains any pattern registered for the
+// given test name.
+func (e *expectedErrors) Match(testName, msg string) bool {
+	if testName == "" {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, p := range e.patterns[testName] {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
 type testLoggerWriterCloser struct {
 	sync.RWMutex
 	t    []testing.TB
@@ -381,6 +427,21 @@ func (w *testLoggerWriterCloser) recordError(msg string) {
 		if strings.Contains(msg, s) {
 			return
 		}
+	}
+
+	// Per-test expected-error registry: a negative test may legitimately
+	// trigger a log.Error that the global ignore list does not cover.
+	// Such tests register the substrings they expect with
+	// test.DeclareExpectedErrors; consult that registry before
+	// escalating the error to a test failure.
+	w.RLock()
+	testName := ""
+	if len(w.t) > 0 {
+		testName = w.t[len(w.t)-1].Name()
+	}
+	w.RUnlock()
+	if ExpectedErrors.Match(testName, msg) {
+		return
 	}
 
 	w.Lock()

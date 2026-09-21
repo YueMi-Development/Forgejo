@@ -1547,6 +1547,7 @@ func TestProjectWebCreateColumnInProject(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer test.DeclareExpectedErrors(t, "bad color code: bad color")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/", tt.owner, tt.repo, tt.projectID)
 			resp := sessionJSONPOST(t, session, url, &createOptsBad, http.StatusInternalServerError)
@@ -1714,6 +1715,7 @@ func TestProjectWebEditProjectColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer test.DeclareExpectedErrors(t, "column ID must not be empty")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/0", tt.owner, tt.repo, tt.projectID)
 			resp := sessionJSONPUT(t, session, url, &editOpts, http.StatusInternalServerError)
@@ -1762,6 +1764,7 @@ func TestProjectWebEditProjectColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer test.DeclareExpectedErrors(t, "bad color code: bad color")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/%d", tt.owner, tt.repo, tt.projectID, tt.columnID)
 			resp := sessionJSONPUT(t, session, url, &editOptsBad, http.StatusInternalServerError)
