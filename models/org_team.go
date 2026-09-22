@@ -20,6 +20,7 @@ import (
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/util"
 
+	"code.forgejo.org/xorm/xorm"
 	"xorm.io/builder"
 )
 
@@ -393,7 +394,10 @@ func InsertTeamMember(ctx context.Context, team *organization.Team, userID int64
 		TeamID: team.ID,
 	}
 
-	err = db.WithTx(ctx, func(ctx context.Context) error {
+	err = db.RetryTx(ctx, db.RetryConfig{
+		AttemptCount: 3,
+		ErrorIs:      []error{xorm.ErrDeadlock},
+	}, func(ctx context.Context) error {
 		// check in transaction
 		isAlreadyMember, err = organization.IsTeamMember(ctx, team.OrgID, team.ID, userID)
 		if err != nil || isAlreadyMember {
