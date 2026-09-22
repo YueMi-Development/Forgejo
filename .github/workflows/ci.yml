@@ -210,8 +210,16 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get -q install -qq -y git-lfs
 
       - name: Run MariaDB integration tests
+        # Test parallelism is pinned to 1 because repository teardown is not
+        # yet idempotent when the Git working directory has been removed
+        # before CloseRepoBranchesPulls finishes. Concurrent DeleteRepository
+        # calls in the integration suite race and surface as "no such file or
+        # directory" errors that fail the job. The durable fix is in
+        # services/repository; this is a CI-side mitigation only. The test
+        # binary does not call t.Parallel(), so -test.parallel=1 is
+        # sufficient to serialize it.
         run: |
-          make test-mysql-migration test-mysql
+          make test-mysql-migration test-mysql GO_TEST_PARALLEL=1
         timeout-minutes: 120
         env:
           TEST_MYSQL_HOST: 127.0.0.1:3306

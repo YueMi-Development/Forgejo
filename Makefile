@@ -705,9 +705,12 @@ generate-ini-mysql:
 		-e 's|{{TEST_TYPE}}|$(or $(TEST_TYPE),integration)|g' \
 			tests/mysql.ini.tmpl > tests/mysql.ini
 
+GO_TEST_PARALLEL ?=
+GOTEST_MYSQL_PARALLEL_FLAG = $(if $(GO_TEST_PARALLEL),-test.parallel $(GO_TEST_PARALLEL),)
+
 .PHONY: test-mysql
 test-mysql: integrations.mysql.test generate-ini-mysql
-	PROJECT_ROOT="$(CURDIR)" PROJECT_CONF=tests/mysql.ini $(GOTESTCOMPILEDRUNPREFIX) ./integrations.mysql.test $(GOTESTCOMPILEDRUNSUFFIX)
+	PROJECT_ROOT="$(CURDIR)" PROJECT_CONF=tests/mysql.ini $(GOTESTCOMPILEDRUNPREFIX) ./integrations.mysql.test $(GOTESTCOMPILEDRUNSUFFIX) $(GOTEST_MYSQL_PARALLEL_FLAG)
 
 .PHONY: test-mysql\#%
 test-mysql\#%: integrations.mysql.test generate-ini-mysql
