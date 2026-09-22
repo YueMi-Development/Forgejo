@@ -16,13 +16,14 @@ import (
 var (
 	infiniteTimerC         = make(chan time.Time)
 	batchDebounceDuration  = 100 * time.Millisecond
-	workerIdleDuration     = 1 * time.Second
 	shutdownDefaultTimeout = 2 * time.Second
 
+	workerIdleDuration           atomic.Int64 // to avoid data race during test
 	unhandledItemRequeueDuration atomic.Int64 // to avoid data race during test
 )
 
 func init() {
+	workerIdleDuration.Store(int64(1 * time.Second))
 	unhandledItemRequeueDuration.Store(int64(5 * time.Second))
 }
 
@@ -146,7 +147,7 @@ func (q *WorkerPoolQueue[T]) doStartNewWorker(wp *workerGroup[T]) {
 		log.Debug("Queue %q starts new worker", q.GetName())
 		defer log.Debug("Queue %q stops idle worker", q.GetName())
 
-		t := time.NewTicker(workerIdleDuration)
+		t := time.NewTicker(time.Duration(workerIdleDuration.Load()))
 		defer t.Stop()
 
 		keepWorking := true
@@ -167,7 +168,7 @@ func (q *WorkerPoolQueue[T]) doStartNewWorker(wp *workerGroup[T]) {
 				}
 				q.doWorkerHandle(batch)
 				// reset the idle ticker, and drain the tick after reset in case a tick is already triggered
-				t.Reset(workerIdleDuration)
+				t.Reset(time.Duration(workerIdleDuration.Load()))
 				select {
 				case <-t.C:
 					break

@@ -242,8 +242,19 @@ func procReceivePullRequest(ctx context.Context,
 	}
 
 	currentCommitID, err := gitRepo.GetRefCommitID(pr.GetGitRefName())
-	if err != nil {
+	if err != nil && !git.IsErrNotExist(err) {
 		return nil, fmt.Errorf("unable to get commit id of reference[%s] in base repository for PR[%d]: %w", pr.GetGitRefName(), pr.ID, err)
+	}
+	if err != nil {
+		// Head ref was deleted; nothing to compare against. Return a
+		// non-fatal hook result so the push is acknowledged without
+		// being logged as an unexpected server fault.
+		return &private.HookProcReceiveRefResult{
+			OriginalRef: refFullName,
+			OldOID:      oldCommitID,
+			NewOID:      newCommitID,
+			Err:         "the pull request head reference no longer exists",
+		}, nil
 	}
 
 	// Do not process this change if nothing was changed.

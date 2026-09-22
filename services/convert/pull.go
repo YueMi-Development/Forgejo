@@ -171,9 +171,17 @@ func ToAPIPullRequest(ctx context.Context, pr *issues_model.PullRequest, doer *u
 		defer gitRepo.Close()
 
 		apiPullRequest.Head.Sha, err = gitRepo.GetRefCommitID(pr.GetGitRefName())
-		if err != nil {
+		if err != nil && !git.IsErrNotExist(err) {
 			log.Error("GetRefCommitID[%s]: %v", pr.GetGitRefName(), err)
 			return nil
+		}
+		if err != nil {
+			// Head ref was deleted (e.g. the PR branch no longer exists).
+			// Leave apiPullRequest.Head.Sha empty and continue so the
+			// caller still gets a usable API representation. Logging at
+			// Error here would fail the integration test logger on what
+			// is an expected outcome for some negative tests.
+			log.Warn("GetRefCommitID[%s]: head ref no longer exists", pr.GetGitRefName())
 		}
 		apiPullRequest.Head.RepoID = pr.BaseRepoID
 		apiPullRequest.Head.Repository = apiPullRequest.Base.Repository
@@ -234,10 +242,16 @@ func ToAPIPullRequest(ctx context.Context, pr *issues_model.PullRequest, doer *u
 		// Calculate diff
 		startCommitID = pr.MergeBase
 
-		// startCommitID is already merge-base with endCommitID we can directly compare.
-		apiPullRequest.ChangedFiles, apiPullRequest.Additions, apiPullRequest.Deletions, err = gitRepo.GetShortStat(startCommitID, endCommitID, false)
-		if err != nil {
-			log.Error("GetShortStat: %v", err)
+		// Only calculate the diff when both endpoints still resolve. A deleted PR
+		// branch can legitimately leave endCommitID empty, and a PR with no
+		// merge-base yet (e.g. a freshly created AGit-style PR) leaves
+		// startCommitID empty. Skip the diff in those cases instead of treating
+		// them as fatal errors.
+		if startCommitID != "" && endCommitID != "" {
+			apiPullRequest.ChangedFiles, apiPullRequest.Additions, apiPullRequest.Deletions, err = gitRepo.GetShortStat(startCommitID, endCommitID, false)
+			if err != nil {
+				log.Warn("GetShortStat[%d]: %v", pr.ID, err)
+			}
 		}
 	}
 

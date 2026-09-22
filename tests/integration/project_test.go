@@ -26,6 +26,7 @@ import (
 	"forgejo.org/modules/setting"
 	project_structs "forgejo.org/modules/structs"
 	"forgejo.org/modules/test"
+	"forgejo.org/modules/testlogger"
 	"forgejo.org/modules/translation"
 	forms_service "forgejo.org/services/forms"
 	"forgejo.org/tests"
@@ -1547,6 +1548,7 @@ func TestProjectWebCreateColumnInProject(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer testlogger.DeclareExpectedErrors(t, "bad color code: bad color")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/", tt.owner, tt.repo, tt.projectID)
 			resp := sessionJSONPOST(t, session, url, &createOptsBad, http.StatusInternalServerError)
@@ -1714,6 +1716,7 @@ func TestProjectWebEditProjectColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer testlogger.DeclareExpectedErrors(t, "column ID must not be empty")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/0", tt.owner, tt.repo, tt.projectID)
 			resp := sessionJSONPUT(t, session, url, &editOpts, http.StatusInternalServerError)
@@ -1762,6 +1765,7 @@ func TestProjectWebEditProjectColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer testlogger.DeclareExpectedErrors(t, "bad color code: bad color")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/%d", tt.owner, tt.repo, tt.projectID, tt.columnID)
 			resp := sessionJSONPUT(t, session, url, &editOptsBad, http.StatusInternalServerError)
@@ -1889,6 +1893,7 @@ func TestProjectWebSetDefaultProjectColumn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer testlogger.DeclareExpectedErrors(t, "column ID must not be empty")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/0/default", tt.owner, tt.repo, tt.projectID)
 			resp := sessionPOST(t, session, url, http.StatusInternalServerError)
@@ -1974,8 +1979,6 @@ func TestProjectWebMoveIssues(t *testing.T) {
 	repoProject := forgery.CreateProject(t, repo, nil)
 	orgRepo := forgery.CreateRepository(t, org.AsUser(), nil)
 
-	moveOpts := &project_structs.MovedIssuesOption{}
-
 	// invalid project
 	for _, tt := range []struct {
 		name  string
@@ -1990,6 +1993,7 @@ func TestProjectWebMoveIssues(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/1234567890/0/move", tt.owner, tt.repo)
+			moveOpts := &project_structs.MovedIssuesOption{}
 			sessionJSONPOST(t, session, url, &moveOpts, http.StatusNotFound)
 		})
 	}
@@ -2009,6 +2013,7 @@ func TestProjectWebMoveIssues(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/0/move", tt.owner, tt.repo, tt.projectID)
+			moveOpts := &project_structs.MovedIssuesOption{}
 			sessionJSONPOST(t, session, url, &moveOpts, http.StatusNotFound)
 		})
 	}
@@ -2027,8 +2032,10 @@ func TestProjectWebMoveIssues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
 			defer test.MockVariableValue(&setting.IsProd, false)()
+			defer testlogger.DeclareExpectedErrors(t, "column ID must not be empty")
 			session := loginUser(t, user.Name)
 			url := fmt.Sprintf("/%s/%s/projects/%d/0/move", tt.owner, tt.repo, tt.projectID)
+			moveOpts := &project_structs.MovedIssuesOption{}
 			resp := sessionJSONPOST(t, session, url, &moveOpts, http.StatusInternalServerError)
 
 			// template: templates/status/500.tmpl
@@ -2069,6 +2076,7 @@ func TestProjectWebMoveIssues(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer tests.PrintCurrentTest(t)()
+			defer testlogger.DeclareExpectedErrors(t, "all issues must belong to the specified project")
 			session := loginUser(t, user.Name)
 
 			// create test column
@@ -2080,8 +2088,10 @@ func TestProjectWebMoveIssues(t *testing.T) {
 
 			url := fmt.Sprintf("/%s/%s/projects/%d/%d/move", tt.owner, tt.repo, tt.projectID, column.ID)
 			// move not existing issue
-			moveOpts.ProjectIssues = []project_structs.ProjectIssue{
-				{IssueID: 1234567890, Sorting: 123},
+			moveOpts := &project_structs.MovedIssuesOption{
+				ProjectIssues: []project_structs.ProjectIssue{
+					{IssueID: 1234567890, Sorting: 123},
+				},
 			}
 			resp := sessionJSONPOST(t, session, url, &moveOpts, http.StatusInternalServerError)
 
@@ -2156,9 +2166,11 @@ func TestProjectWebMoveIssues(t *testing.T) {
 			assert.EqualValues(t, 2, count)
 
 			// set new sorting in moveOpts
-			moveOpts.ProjectIssues = []project_structs.ProjectIssue{
-				{IssueID: preIssues[0].IssueID, Sorting: preIssues[1].Sorting},
-				{IssueID: preIssues[1].IssueID, Sorting: preIssues[0].Sorting},
+			moveOpts := &project_structs.MovedIssuesOption{
+				ProjectIssues: []project_structs.ProjectIssue{
+					{IssueID: preIssues[0].IssueID, Sorting: preIssues[1].Sorting},
+					{IssueID: preIssues[1].IssueID, Sorting: preIssues[0].Sorting},
+				},
 			}
 
 			// change sorting

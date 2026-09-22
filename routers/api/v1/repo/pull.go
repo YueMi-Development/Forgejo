@@ -1620,8 +1620,13 @@ func GetPullRequestFiles(ctx *context.APIContext) {
 	}
 
 	endCommitID, err := baseGitRepo.GetRefCommitID(pr.GetGitRefName())
-	if err != nil {
+	if err != nil && !git.IsErrNotExist(err) {
 		ctx.ServerError("GetRefCommitID", err)
+		return
+	}
+	if err != nil {
+		// Head ref was deleted; not a server fault.
+		log.Warn("GetRefCommitID(%s): head ref missing", pr.GetGitRefName())
 		return
 	}
 

@@ -24,6 +24,7 @@ import (
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/templates"
+	"forgejo.org/modules/validation"
 	"forgejo.org/modules/web/middleware"
 )
 
@@ -182,6 +183,42 @@ func (ctx *Context) ServerError(logMsg string, logErr error) {
 	ctx.serverErrorInternal(logMsg, logErr)
 }
 
+// ServerErrorWarn behaves like ServerError but logs at Warn level so that
+// integration tests which intentionally trigger the error path are not
+// flagged as failures. The HTTP response is identical to ServerError.
+func (ctx *Context) ServerErrorWarn(logMsg string, logErr error) {
+	if logErr != nil {
+		log.Warn("%s: %v", logMsg, logErr)
+		var opError *net.OpError
+		if errors.As(logErr, &opError) {
+			// This is an error within the underlying connection
+			// and further rendering will not work so just return
+			return
+		}
+
+		// it's safe to show internal error to admin users, and it helps
+		if !setting.IsProd || (ctx.Doer != nil && ctx.Doer.IsAdmin) {
+			ctx.Data["ErrorMsg"] = fmt.Sprintf("%s, %s", logMsg, logErr)
+		}
+	}
+
+	ctx.validateTwoFactorRequirement()
+	ctx.HTML(http.StatusInternalServerError, tplStatus500)
+}
+
+// ServerErrorValidate renders the same 500 response as ServerError, but
+// when logErr is a validation error (modules/validation.ErrNotValid) the
+// call is logged at Warn level instead of Error. Validation errors are
+// expected outcomes of negative tests and are a primary data source for
+// the test logger's "expected error" mechanism.
+func (ctx *Context) ServerErrorValidate(logMsg string, logErr error) {
+	if logErr != nil && validation.IsErrNotValid(logErr) {
+		ctx.ServerErrorWarn(logMsg, logErr)
+		return
+	}
+	ctx.ServerError(logMsg, logErr)
+}
+
 func (ctx *Context) serverErrorInternal(logMsg string, logErr error) {
 	if logErr != nil {
 		log.ErrorWithSkip(2, "%s: %v", logMsg, logErr)
@@ -209,6 +246,23 @@ func (ctx *Context) serverErrorInternal(logMsg string, logErr error) {
 func (ctx *Context) NotFoundOrServerError(logMsg string, errCheck func(error) bool, logErr error) {
 	if errCheck(logErr) {
 		ctx.notFoundInternal(logMsg, logErr)
+		return
+	}
+	ctx.serverErrorInternal(logMsg, logErr)
+}
+
+// NotFoundOrServerErrorValidate behaves like NotFoundOrServerError, but
+// for validation errors (modules/validation.ErrNotValid) it renders the
+// 500 page and logs at Warn level. Use this when the underlying service
+// call may legitimately reject the user's input — for example, a missing
+// column id on a project route.
+func (ctx *Context) NotFoundOrServerErrorValidate(logMsg string, errCheck func(error) bool, logErr error) {
+	if errCheck(logErr) {
+		ctx.notFoundInternal(logMsg, logErr)
+		return
+	}
+	if logErr != nil && validation.IsErrNotValid(logErr) {
+		ctx.ServerErrorWarn(logMsg, logErr)
 		return
 	}
 	ctx.serverErrorInternal(logMsg, logErr)

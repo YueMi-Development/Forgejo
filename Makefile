@@ -571,7 +571,8 @@ test: test-frontend test-backend
 .PHONY: test-backend
 test-backend: | compute-go-test-packages
 	@echo "Running go test with $(GOTESTFLAGS) -tags '$(TEST_TAGS)'..."
-	@TZ=UTC PROJECT_ROOT="$(CURDIR)" $(GOTEST) $(GOTESTFLAGS) -tags='$(TEST_TAGS)' $(GO_TEST_PACKAGES)
+	@TEST_MINIO_ENDPOINT='$(or $(TEST_S3_HOST),127.0.0.1:9000)' \
+	TZ=UTC PROJECT_ROOT="$(CURDIR)" $(GOTEST) $(GOTESTFLAGS) -tags='$(TEST_TAGS)' $(GO_TEST_PACKAGES)
 
 .PHONY: test-remote-cacher
 test-remote-cacher:
@@ -627,7 +628,8 @@ coverage-show-percentage: coverage-convert
 
 .PHONY: coverage-run
 coverage-run: | compute-go-test-packages
-	contrib/coverage-helper.sh test_packages $(COVERAGE_TEST_PACKAGES)
+	TEST_MINIO_ENDPOINT='$(or $(TEST_S3_HOST),127.0.0.1:9000)' \
+		contrib/coverage-helper.sh test_packages $(COVERAGE_TEST_PACKAGES)
 
 .PHONY: coverage-run-%
 coverage-run-%: coverage-run-migration-% coverage-run-integration-%
@@ -703,9 +705,12 @@ generate-ini-mysql:
 		-e 's|{{TEST_TYPE}}|$(or $(TEST_TYPE),integration)|g' \
 			tests/mysql.ini.tmpl > tests/mysql.ini
 
+GO_TEST_PARALLEL ?=
+GOTEST_MYSQL_PARALLEL_FLAG = $(if $(GO_TEST_PARALLEL),-test.parallel $(GO_TEST_PARALLEL),)
+
 .PHONY: test-mysql
 test-mysql: integrations.mysql.test generate-ini-mysql
-	PROJECT_ROOT="$(CURDIR)" PROJECT_CONF=tests/mysql.ini $(GOTESTCOMPILEDRUNPREFIX) ./integrations.mysql.test $(GOTESTCOMPILEDRUNSUFFIX)
+	PROJECT_ROOT="$(CURDIR)" PROJECT_CONF=tests/mysql.ini $(GOTESTCOMPILEDRUNPREFIX) ./integrations.mysql.test $(GOTESTCOMPILEDRUNSUFFIX) $(GOTEST_MYSQL_PARALLEL_FLAG)
 
 .PHONY: test-mysql\#%
 test-mysql\#%: integrations.mysql.test generate-ini-mysql

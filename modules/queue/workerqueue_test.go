@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"forgejo.org/modules/setting"
-	"forgejo.org/modules/test"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -178,7 +177,9 @@ func testWorkerPoolQueuePersistence(t *testing.T, queueSetting setting.QueueSett
 }
 
 func TestWorkerPoolQueueActiveWorkers(t *testing.T) {
-	defer test.MockVariableValue(&workerIdleDuration, 300*time.Millisecond)()
+	oldWorkerIdleDuration := workerIdleDuration.Load()
+	workerIdleDuration.Store(int64(300 * time.Millisecond))
+	defer workerIdleDuration.Store(oldWorkerIdleDuration)
 
 	handler := func(items ...int) (unhandled []int) {
 		time.Sleep(100 * time.Millisecond)
@@ -197,7 +198,7 @@ func TestWorkerPoolQueueActiveWorkers(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	assert.Equal(t, 1, q.GetWorkerNumber())
 	assert.Equal(t, 0, q.GetWorkerActiveNumber())
-	time.Sleep(workerIdleDuration)
+	time.Sleep(time.Duration(workerIdleDuration.Load()))
 	assert.Equal(t, 1, q.GetWorkerNumber()) // there is at least one worker after the queue begins working
 	stop()
 
@@ -213,7 +214,7 @@ func TestWorkerPoolQueueActiveWorkers(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	assert.Equal(t, 3, q.GetWorkerNumber())
 	assert.Equal(t, 0, q.GetWorkerActiveNumber())
-	time.Sleep(workerIdleDuration)
+	time.Sleep(time.Duration(workerIdleDuration.Load()))
 	assert.Equal(t, 1, q.GetWorkerNumber()) // there is at least one worker after the queue begins working
 	stop()
 }
@@ -251,11 +252,13 @@ func TestWorkerPoolQueueShutdown(t *testing.T) {
 }
 
 func TestWorkerPoolQueueWorkerIdleReset(t *testing.T) {
-	defer test.MockVariableValue(&workerIdleDuration, 1*time.Millisecond)()
+	oldWorkerIdleDuration := workerIdleDuration.Load()
+	workerIdleDuration.Store(int64(1 * time.Millisecond))
+	defer workerIdleDuration.Store(oldWorkerIdleDuration)
 
 	chGoroutineIDs := make(chan string)
 	handler := func(items ...int) (unhandled []int) {
-		time.Sleep(10 * workerIdleDuration)
+		time.Sleep(10 * time.Duration(workerIdleDuration.Load()))
 		chGoroutineIDs <- goroutineID() // hacky way to identify a worker
 		return nil
 	}

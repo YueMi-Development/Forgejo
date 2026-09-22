@@ -29,6 +29,73 @@ var (
 
 var WriterCloser = &testLoggerWriterCloser{}
 
+// ExpectedErrors tracks error substrings that the current test
+// intentionally triggers. Anything matching a registered pattern is
+// logged at its normal level but never escalates to a test failure.
+// Tests register patterns via DeclareExpectedErrors and the
+// registration is removed automatically when the test finishes.
+var ExpectedErrors = &expectedErrors{patterns: map[string][]string{}}
+
+type expectedErrors struct {
+	mu       sync.Mutex
+	patterns map[string][]string // test name → substrings
+}
+
+func (e *expectedErrors) Add(testName string, patterns ...string) {
+	if testName == "" || len(patterns) == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.patterns[testName] = append(e.patterns[testName], patterns...)
+}
+
+func (e *expectedErrors) Remove(testName string) {
+	if testName == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.patterns, testName)
+}
+
+// Match returns true if msg contains any pattern registered for the
+// given test name.
+func (e *expectedErrors) Match(testName, msg string) bool {
+	if testName == "" {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, p := range e.patterns[testName] {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// DeclareExpectedErrors marks the listed log message substrings as
+// expected for the duration of the current test. The messages will
+// still be logged at their normal level, but they will not cause the
+// test to fail. Registration is removed automatically when the test
+// finishes via t.Cleanup.
+//
+// Use this for negative tests that intentionally exercise invalid
+// input or invalid state. Production logging is unchanged; only the
+// test logger's failure escalation is suppressed for the registered
+// substrings.
+//
+// The helper lives in modules/testlogger rather than modules/test so
+// that callers in modules/setting/*_test.go (which already import
+// modules/test) do not pull modules/testlogger transitively and
+// create an import cycle with modules/setting via modules/queue.
+func DeclareExpectedErrors(t testing.TB, patterns ...string) {
+	t.Helper()
+	ExpectedErrors.Add(t.Name(), patterns...)
+	t.Cleanup(func() { ExpectedErrors.Remove(t.Name()) })
+}
+
 type testLoggerWriterCloser struct {
 	sync.RWMutex
 	t    []testing.TB
@@ -255,6 +322,14 @@ var ignoredErrorMessage = []string{
 	`:GetIssuesAllCommitStatus() [E] getAllCommitStatus: can't get commit statuses of pull [6]: object does not exist [id: refs/pull/2/head, rel_path: ]`,
 	// TestLinksLogin
 	`:GetIssuesAllCommitStatus() [E] Cannot open git repository <Repository 23:org17/big_test_public_4> for issue #1[20]. Error: no such file or directory`,
+	// TestBaseTemplateTitle
+	`:RepoAssignment() [E] Repository <Repository 23:org17/big_test_public_4> has a broken repository on the file system:`,
+	// IssueChangeLabels on a broken/empty repo: triggered by API label tests
+	// after a prior test deleted the git directory.
+	`Notify() [E] an error occurred while executing the IssueChangeLabels actions method: git.OpenRepository: no such file or directory`,
+	// DeleteRepository: CloseRepoBranchesPulls logs and continues when the git
+	// directory has already been removed.
+	`services/repository/repository.go:58:DeleteRepository() [E] CloseRepoBranchesPulls failed: no such file or directory`,
 	// TestMigrate
 	`] for OwnerID[2] failed: error while listing issues: token does not have at least one of required scope(s): [read:issue]`,
 	// TestMigrate
@@ -373,6 +448,21 @@ func (w *testLoggerWriterCloser) recordError(msg string) {
 		if strings.Contains(msg, s) {
 			return
 		}
+	}
+
+	// Per-test expected-error registry: a negative test may legitimately
+	// trigger a log.Error that the global ignore list does not cover.
+	// Such tests register the substrings they expect with
+	// DeclareExpectedErrors; consult that registry before
+	// escalating the error to a test failure.
+	w.RLock()
+	testName := ""
+	if len(w.t) > 0 {
+		testName = w.t[len(w.t)-1].Name()
+	}
+	w.RUnlock()
+	if ExpectedErrors.Match(testName, msg) {
+		return
 	}
 
 	w.Lock()

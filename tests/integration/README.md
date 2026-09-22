@@ -84,6 +84,16 @@ Start tests based on the database container
 TEST_PGSQL_HOST=localhost:5432 TEST_PGSQL_DBNAME=test TEST_PGSQL_USERNAME=postgres TEST_PGSQL_PASSWORD=postgres TEST_S3_HOST=localhost:9000 make 'test-pgsql#Test'
 ```
 
+### Running `modules/storage` MinIO tests locally
+
+`TestMinioStorageIterator`, `TestVirtualHostMinioStorage`, and `TestS3StorageBadRequest` in
+`modules/storage/minio_test.go` require a reachable MinIO server. They `t.Skip` when
+`TEST_MINIO_ENDPOINT` is empty; if the env var is set but no server is listening on that endpoint,
+they do a quick TCP probe and skip as well. `make test-backend` and `make coverage-run`
+automatically set `TEST_MINIO_ENDPOINT` to `$(TEST_S3_HOST)` (default `127.0.0.1:9000`) when
+starting the test process, so as long as a MinIO server is reachable at that endpoint with
+credentials `123456` / `12345678`, the tests will run.
+
 ### Running individual tests
 
 Example command to run GPG test:

@@ -415,7 +415,7 @@ func DeleteProjectColumn(ctx *context.Context) {
 
 	_, err := project_service.GetValidProjectColumnByID(ctx, project.ID, ctx.ParamsInt64("columnID"))
 	if err != nil {
-		ctx.NotFoundOrServerError("GetValidProjectColumnByID", project_model.IsErrProjectColumnNotExist, err)
+		ctx.NotFoundOrServerErrorValidate("GetValidProjectColumnByID", project_model.IsErrProjectColumnNotExist, err)
 		return
 	}
 
@@ -465,7 +465,7 @@ func CheckProjectColumnChangePermissions(ctx *context.Context) (*project_model.P
 
 	column, err := project_service.GetValidProjectColumnByID(ctx, project.ID, ctx.ParamsInt64("columnID"))
 	if err != nil {
-		ctx.NotFoundOrServerError("GetValidProjectColumnByID", project_model.IsErrProjectColumnNotExist, err)
+		ctx.NotFoundOrServerErrorValidate("GetValidProjectColumnByID", project_model.IsErrProjectColumnNotExist, err)
 		return nil, nil
 	}
 	return project, column
@@ -526,7 +526,7 @@ func MoveIssues(ctx *context.Context) {
 
 	column, err := project_service.GetValidProjectColumnByID(ctx, project.ID, ctx.ParamsInt64("columnID"))
 	if err != nil {
-		ctx.NotFoundOrServerError("GetValidProjectColumnByID", project_model.IsErrProjectColumnNotExist, err)
+		ctx.NotFoundOrServerErrorValidate("GetValidProjectColumnByID", project_model.IsErrProjectColumnNotExist, err)
 		return
 	}
 
@@ -547,12 +547,12 @@ func MoveIssues(ctx *context.Context) {
 	}
 
 	if err = project_service.ValidIssueIDs(ctx, project.OwnerID, existingIssues); err != nil {
-		ctx.ServerError("ValidIssueID", err)
+		ctx.ServerErrorWarn("ValidIssueID", err)
 		return
 	}
 
 	if err = project_service.MoveIssuesOnProjectColumn(ctx, column, form); err != nil {
-		ctx.ServerError("MoveIssuesOnProjectColumn", err)
+		ctx.ServerErrorWarn("MoveIssuesOnProjectColumn", err)
 		return
 	}
 
