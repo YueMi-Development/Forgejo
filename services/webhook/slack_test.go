@@ -106,7 +106,7 @@ func TestSlackPayload(t *testing.T) {
 		pl, err := sc.Review(p, webhook_module.HookEventPullRequestReviewApproved)
 		require.NoError(t, err)
 
-		assert.Equal(t, "[test/repo] Pull request review approved: [#12 Fix bug](http://localhost:3000/test/repo/pulls/12) by `user1`", pl.Text)
+		assert.Equal(t, "[test/repo] Pull request review approved: <http://localhost:3000/test/repo/pulls/12|#12 Fix bug> by `user1`", pl.Text)
 	})
 
 	t.Run("Repository", func(t *testing.T) {
@@ -401,13 +401,13 @@ View details on https://example.com/acme/test/actions/runs/196540/jobs/3/attempt
 					},
 					Run: &api.ActionRun{
 						Title: "Update README.md",
+						Repo: &api.Repository{
+							FullName: "acme/test",
+						},
 						TriggerUser: &api.User{
 							UserName:  "jane",
 							AvatarURL: "https://example.com/avatars/7dc9cf?size=64",
 						},
-					},
-					Repository: &api.Repository{
-						FullName: "acme/test",
 					},
 				}
 

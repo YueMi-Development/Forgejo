@@ -9,8 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
+	"time"
 
 	actions_model "forgejo.org/models/actions"
 	auth_model "forgejo.org/models/auth"
@@ -21,12 +21,13 @@ import (
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/timeutil"
 	"forgejo.org/modules/util"
 	"forgejo.org/modules/webhook"
 	"forgejo.org/routers/api/v1/shared"
 	repo_service "forgejo.org/services/repository"
-	files_service "forgejo.org/services/repository/files"
 	"forgejo.org/tests"
+	"forgejo.org/tests/forgery"
 
 	gouuid "github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -152,13 +153,10 @@ func TestActionsAPIWorkflowDispatchReturnInfo(t *testing.T) {
 				token := getUserToken(t, user2.LowerName, auth_model.AccessTokenScopeWriteRepository)
 
 				// create the repo
-				repo, _, f := tests.CreateDeclarativeRepo(t, user2, "api-repo-workflow-dispatch",
-					[]unit_model.Type{unit_model.TypeActions}, nil,
-					[]*files_service.ChangeRepoFile{
-						{
-							Operation: "create",
-							TreePath:  fmt.Sprintf("%s/%s", testCase.workflowDirectory, testCase.workflowID),
-							ContentReader: strings.NewReader(`name: WD
+				repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{
+					Name: "api-repo-workflow-dispatch",
+					Files: forgery.MapFS{
+						fmt.Sprintf("%s/%s", testCase.workflowDirectory, testCase.workflowID): forgery.MapFile(`name: WD
 on: [workflow-dispatch]
 jobs:
   t1:
@@ -170,11 +168,10 @@ jobs:
     steps:
       - run: echo "test 2"
 `,
-							),
-						},
+						),
 					},
-				)
-				defer f()
+				})
+				forgery.EnableRepoUnit(t, repo, unit_model.TypeActions, nil)
 
 				req := NewRequestWithJSON(
 					t,
@@ -227,6 +224,50 @@ jobs:
 				body, err := io.ReadAll(res.Body)
 				require.NoError(t, err)
 				assert.Empty(t, body) // 204 No Content doesn't support a body, so should be empty
+			})
+		}
+	})
+}
+
+func TestActionsAPIWorkflowDispatchErrors(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		token := getUserToken(t, user2.LowerName, auth_model.AccessTokenScopeWriteRepository)
+
+		repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{
+			Name: "api-repo-workflow-dispatch-errors",
+			Files: forgery.MapFS{
+				".forgejo/workflows/dispatch.yml": forgery.MapFile(`name: dispatch
+on: [workflow_dispatch]
+jobs:
+  test:
+    runs-on: docker
+    steps:
+      - run: echo test
+`),
+			},
+		})
+
+		for _, testCase := range []struct {
+			name            string
+			workflowName    string
+			ref             string
+			status          int
+			expectedMessage string
+		}{
+			{name: "missing workflow", workflowName: "missing.yml", ref: repo.DefaultBranch, status: http.StatusNotFound, expectedMessage: "workflow not found"},
+			{name: "missing ref", workflowName: "dispatch.yml", ref: "missing-ref", status: http.StatusBadRequest, expectedMessage: "could not expand reference 'missing-ref'"},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				req := NewRequestWithJSON(t, http.MethodPost,
+					fmt.Sprintf("/api/v1/repos/%s/%s/actions/workflows/%s/dispatches", repo.OwnerName, repo.Name, testCase.workflowName),
+					&api.DispatchWorkflowOption{Ref: testCase.ref},
+				).AddTokenAuth(token)
+				resp := MakeRequest(t, req, testCase.status)
+
+				var apiError api.APIError
+				DecodeJSON(t, resp, &apiError)
+				assert.Equal(t, testCase.expectedMessage, apiError.Message)
 			})
 		}
 	})
@@ -325,56 +366,113 @@ func TestActionsAPIGetActionRun(t *testing.T) {
 
 	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 63})
 	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: repo.OwnerID})
-	token := getUserToken(t, user.LowerName, auth_model.AccessTokenScopeWriteRepository)
+	run892 := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 892, RepoID: repo.ID})
 
-	testqueries := []struct {
-		name           string
-		runID          int64
-		expectedStatus int
-	}{
-		{
-			name:           "existing return ok",
-			runID:          892,
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "non existing run",
-			runID:          9876543210, // I hope this run will not exists, else just change it to another.
-			expectedStatus: http.StatusNotFound,
-		},
-		{
-			name:           "existing run but wrong repo should not be found",
-			runID:          891,
-			expectedStatus: http.StatusNotFound,
-		},
-	}
+	token := getUserToken(t, user.LowerName, auth_model.AccessTokenScopeReadRepository)
 
-	for _, tt := range testqueries {
-		t.Run(tt.name, func(t *testing.T) {
-			req := NewRequest(t, http.MethodGet,
-				fmt.Sprintf("/api/v1/repos/%s/%s/actions/runs/%d",
-					repo.OwnerName, repo.Name, tt.runID,
-				),
-			)
-			req.AddTokenAuth(token)
+	t.Run("Waiting run", func(t *testing.T) {
+		run := &actions_model.ActionRun{
+			Title:             "Update README.md",
+			RepoID:            repo.ID,
+			OwnerID:           user.ID,
+			WorkflowID:        "test.yaml",
+			Index:             4,
+			Ref:               "refs/heads/main",
+			IsRefDeleted:      false,
+			CommitSHA:         "dd7ec6d7d24b0718cf1832984dadfad4b7113620",
+			IsForkPullRequest: true,
+			NeedApproval:      true,
+			ApprovedBy:        28,
+			Event:             "push",
+			EventPayload:      `{"payload":true}`,
+			TriggerEvent:      "push",
+			Status:            actions_model.StatusWaiting,
+			TriggerUserID:     user.ID,
+		}
+		unittest.AssertSuccessfulInsert(t, run)
 
-			res := MakeRequest(t, req, tt.expectedStatus)
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d", repo.FullName(), run.ID)
 
-			// Only interested in the data if 200 OK
-			if tt.expectedStatus != http.StatusOK {
-				return
-			}
+		req := NewRequest(t, http.MethodGet, requestURL)
+		req.AddTokenAuth(token)
 
-			dbRun := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: tt.runID})
-			apiRun := new(api.ActionRun)
-			DecodeJSON(t, res, apiRun)
+		res := MakeRequest(t, req, http.StatusOK)
+		var receivedRun map[string]any
+		DecodeJSON(t, res, &receivedRun)
 
-			assert.Equal(t, dbRun.Index, apiRun.Index)
-			assert.Equal(t, dbRun.Status.String(), apiRun.Status)
-			assert.Equal(t, dbRun.CommitSHA, apiRun.CommitSHA)
-			assert.Equal(t, dbRun.TriggerUserID, apiRun.TriggerUser.ID)
-		})
-	}
+		assert.EqualValues(t, run.ID, receivedRun["id"])
+		assert.Equal(t, "Update README.md", receivedRun["title"])
+		assert.NotNil(t, receivedRun["repository"])
+		assert.Equal(t, "test.yaml", receivedRun["workflow_id"])
+		assert.EqualValues(t, 4, receivedRun["index_in_repo"])
+		assert.NotNil(t, receivedRun["trigger_user"])
+		assert.Equal(t, "main", receivedRun["prettyref"])
+		assert.Equal(t, false, receivedRun["is_ref_deleted"])
+		assert.Equal(t, "dd7ec6d7d24b0718cf1832984dadfad4b7113620", receivedRun["commit_sha"])
+		assert.Equal(t, true, receivedRun["is_fork_pull_request"])
+		assert.Equal(t, true, receivedRun["need_approval"])
+		assert.EqualValues(t, 28, receivedRun["approved_by"])
+		assert.Equal(t, "push", receivedRun["event"])
+		assert.Equal(t, `{"payload":true}`, receivedRun["event_payload"])
+		assert.Equal(t, "push", receivedRun["trigger_event"])
+		assert.Equal(t, "waiting", receivedRun["status"])
+		assert.Nil(t, receivedRun["started"])
+		assert.Nil(t, receivedRun["stopped"])
+		assert.Equal(t, run.Created.AsLocalTime().Format(time.RFC3339), receivedRun["created"])
+		assert.Equal(t, run.Updated.AsLocalTime().Format(time.RFC3339), receivedRun["updated"])
+		assert.Nil(t, receivedRun["duration"])
+		assert.Equal(t, setting.AppURL+"user2/test_action_run_search/actions/runs/4", receivedRun["html_url"])
+	})
+
+	t.Run("Completed run", func(t *testing.T) {
+		run := &actions_model.ActionRun{
+			Title:      "Update package.json",
+			RepoID:     repo.ID,
+			OwnerID:    user.ID,
+			WorkflowID: "build.yaml",
+			Index:      5,
+			Status:     actions_model.StatusFailure,
+			Started:    timeutil.TimeStamp(1790017528),
+			Stopped:    timeutil.TimeStamp(1790018019),
+		}
+		unittest.AssertSuccessfulInsert(t, run)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d", repo.FullName(), run.ID)
+
+		req := NewRequest(t, http.MethodGet, requestURL)
+		req.AddTokenAuth(token)
+
+		res := MakeRequest(t, req, http.StatusOK)
+		var receivedRun map[string]any
+		DecodeJSON(t, res, &receivedRun)
+
+		assert.EqualValues(t, run.ID, receivedRun["id"])
+		assert.Equal(t, "Update package.json", receivedRun["title"])
+		assert.NotNil(t, receivedRun["repository"])
+		assert.Equal(t, "build.yaml", receivedRun["workflow_id"])
+		assert.Equal(t, "failure", receivedRun["status"])
+		assert.Equal(t, run.Started.AsLocalTime().Format(time.RFC3339), receivedRun["started"])
+		assert.Equal(t, run.Stopped.AsLocalTime().Format(time.RFC3339), receivedRun["stopped"])
+		assert.Equal(t, run.Created.AsLocalTime().Format(time.RFC3339), receivedRun["created"])
+		assert.Equal(t, run.Updated.AsLocalTime().Format(time.RFC3339), receivedRun["updated"])
+		assert.InEpsilon(t, 491*10e8 /* 491 seconds */, receivedRun["duration"], 1.0)
+	})
+
+	t.Run("Wrong repository", func(t *testing.T) {
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d", repo.FullName(), run892.ID)
+
+		req := NewRequest(t, http.MethodGet, requestURL)
+		req.AddTokenAuth(token)
+
+		MakeRequest(t, req, http.StatusOK)
+
+		requestURL = fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d", "wrong/repository", run892.ID)
+
+		req = NewRequest(t, http.MethodGet, requestURL)
+		req.AddTokenAuth(token)
+
+		MakeRequest(t, req, http.StatusNotFound)
+	})
 }
 
 func TestAPIRepoActionsRunnerRegistrationTokenOperations(t *testing.T) {
@@ -653,19 +751,18 @@ func TestAPIRepoActionsRunnerOperations(t *testing.T) {
 	})
 
 	t.Run("Endpoints disabled if Actions disabled", func(t *testing.T) {
-		repository, _, cleanUp := tests.CreateDeclarativeRepo(t, user2, "no-actions",
-			[]unit_model.Type{unit_model.TypeCode, unit_model.TypeActions}, []unit_model.Type{}, nil)
-		defer cleanUp()
+		repo := forgery.CreateRepository(t, user2, &forgery.CreateRepositoryOptions{Name: "no-actions"})
+		forgery.EnableRepoUnits(t, repo, unit_model.TypeCode, unit_model.TypeActions)
 
-		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runners", repository.FullName())
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runners", repo.FullName())
 
 		request := NewRequest(t, "GET", requestURL)
 		request.AddTokenAuth(readToken)
 		MakeRequest(t, request, http.StatusOK)
 
-		enabledUnits := []repo_model.RepoUnit{{RepoID: repository.ID, Type: unit_model.TypeCode}}
+		enabledUnits := []repo_model.RepoUnit{{RepoID: repo.ID, Type: unit_model.TypeCode}}
 		disabledUnits := []unit_model.Type{unit_model.TypeActions}
-		err := repo_service.UpdateRepositoryUnits(db.DefaultContext, repository, enabledUnits, disabledUnits)
+		err := repo_service.UpdateRepositoryUnits(db.DefaultContext, repo, enabledUnits, disabledUnits)
 		require.NoError(t, err)
 
 		request = NewRequest(t, "GET", requestURL)
